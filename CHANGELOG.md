@@ -7,23 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet. New entries land here between releases._
+
+## [0.5.0] - 2026-05-04
+
+A packaging and operations release: container image, Helm chart, and
+container CI/CD pipeline for `ghcr.io`. Backward compatible — runtime
+behavior is identical to 0.4.0; this release adds deployment substrate.
+
 ### Added
 
 - **Dockerfile** — multi-stage production build (`node:24-alpine`), non-root
-  user, read-only rootfs, security-context hardened.
+  user (uid 1000), read-only root filesystem compatible (writable `/tmp`
+  emptyDir mount), drop-ALL capabilities, `seccompProfile: RuntimeDefault`.
 - **Helm chart** (`chart/`) — Kubernetes-ready deployment with ConfigMap,
-  Secret, ServiceAccount, PodDisruptionBudget, liveness/readiness probes
-  against `/healthz`, and support for `existingSecret`.
-  - Fail-loud guards: empty PAT token without `existingSecret` renders a
-    template error; PDB `minAvailable >= replicaCount` is caught at render
-    time to prevent drain deadlocks.
-  - New config values: `AUTH_MODE`, `USE_STREAMABLE_HTTP`,
-    `CORS_ALLOW_ORIGINS`, `HEALTHZ_MAX_SESSIONS` (from v0.4.0 features).
-- **GitHub Actions CI** (`.github/workflows/build.yml`) — three-job
-  pipeline: _validate_ (hadolint + helm lint + helm template), _docker_
-  (build & push via `docker/metadata-action`), _helm_ (package with
-  `--version` + OCI push). `:latest` tag only on semver releases; PRs run
-  validation only.
+  Secret (or `existingSecret` reference), Service, ServiceAccount, optional
+  PodDisruptionBudget, and liveness/readiness probes against `/healthz`.
+  - **Five fail-loud chart guards**: empty PAT in PAT mode without
+    `existingSecret`; `existingSecret` AND inline `secret.GITLAB_PERSONAL_ACCESS_TOKEN`
+    both set (silent precedence trap); PDB `minAvailable >= replicaCount`
+    (drain deadlock); PDB both `minAvailable` AND `maxUnavailable` set
+    (K8s-rejected); `AUTH_MODE` invalid value at server startup.
+  - All v0.4.0 transport env vars wired in `values.yaml`: `AUTH_MODE`,
+    `USE_STREAMABLE_HTTP`, `CORS_ALLOW_ORIGINS`, `HEALTHZ_MAX_SESSIONS`.
+  - `checksum/config` and `checksum/secret` deployment annotations roll
+    pods on ConfigMap/Secret value changes.
+- **`.github/workflows/build.yml`** — three-job CI pipeline:
+  - `validate` (every PR + push): hadolint on Dockerfile, `helm lint`,
+    `helm template` smoke test.
+  - `docker` (push to main + tags only): builds and pushes to
+    `ghcr.io/<owner>/<repo>` via `docker/metadata-action@v5` —
+    `sha-<short>` on main pushes, `<semver>` + `:latest` on tag pushes only.
+  - `helm` (tag pushes only): packages chart with `helm package --version`
+    and pushes to `oci://ghcr.io/yoda-digital/charts`. Chart version is
+    set by `yq` with post-mutation assertion (replaces fragile `sed -i`).
+- Branch protection ruleset updated to require the new `validate` status
+  check on PRs (in addition to `build-and-test` + `Analyze (javascript-typescript)`).
+
+### Credits
+
+Implementation work by [@ecthelion77](https://github.com/ecthelion77)
+(Olivier Gintrand). Maintainer rebase fixup with two additional fail-loud
+guards (silent secret precedence + PDB exclusivity) by
+[@nalyk](https://github.com/nalyk). Reviewed via #29 → merged via #44.
 
 ## [0.4.0] - 2026-05-04
 

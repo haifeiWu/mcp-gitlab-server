@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet. New entries land here between releases._
+
+## [0.4.0] - 2026-05-04
+
+A feature release adding OAuth per-connection authentication and the MCP
+Streamable HTTP transport. Backward compatible: PAT mode and stdio/SSE
+transports continue to work unchanged.
+
 ### Added
 
 - **OAuth per-connection authentication** (`AUTH_MODE=oauth`): new
@@ -15,13 +23,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header. PAT mode (default) is unchanged.
 - **Streamable HTTP transport** (`USE_STREAMABLE_HTTP=true`): implements
   the MCP Streamable HTTP spec on `POST/GET/DELETE /mcp` with session
-  management via `MCP-Session-Id` header.
+  management via `MCP-Session-Id` header. Cross-protocol session-id
+  collisions and unknown sessions return 400 JSON-RPC errors.
 - **CORS origin allowlist** (`CORS_ALLOW_ORIGINS`): restrict allowed
   origins in OAuth mode; permissive `*` default retained for PAT mode only.
+  `Vary: Origin` set when echoing matched origin.
 - `/healthz` endpoint with active session count and configurable
-  threshold (`HEALTHZ_MAX_SESSIONS`) for meaningful Kubernetes probes.
+  threshold (`HEALTHZ_MAX_SESSIONS`, default `10000`); returns `503` with
+  `{"status":"unhealthy","reason":"session_limit_exceeded","sessions":<n>}`
+  when the threshold is exceeded — meaningful signal for Kubernetes probes
+  rather than the prior unconditional `200`.
 - `docs/OPERATIONS.md` — operations guide covering health checks,
   Kubernetes probe configuration, environment variables, and troubleshooting.
+- `AUTH_MODE` environment variable validated at startup: invalid values
+  exit with `process.exit(1)` and a clear message.
+- 17 new vitest cases in `src/transport.test.ts` covering Bearer extraction
+  (7), Streamable HTTP session lifecycle (3), cross-protocol session
+  collision (2), `/healthz` endpoint (2), and CORS origin handling (3).
+  Total: 58 vitest cases pass.
+
+### Changed
+
+- `src/transport.ts` reorganized: extracted helpers `getCorsAllowedOrigins`,
+  `getAuthModeEnv`, `getSessionServer` for clarity and testability.
+- Memory-leak hardening on Streamable HTTP `connect()` failure
+  (`initializedSid` capture + best-effort `close()` + idempotent
+  `transports[sid] === transport` identity check on cleanup).
+- Legacy SSE cleanup is now idempotent and registered on both `req.close`
+  and `transport.onclose`; transport map entry created only after a
+  successful `connect()`.
+
+### Credits
+
+Implementation work by [@ecthelion77](https://github.com/ecthelion77)
+(Olivier Gintrand). Maintainer rebase fixup by
+[@nalyk](https://github.com/nalyk). Reviewed via #28 → merged via #42.
 
 ## [0.3.2] - 2026-05-04
 

@@ -343,12 +343,19 @@ export const GitLabWikiPagesResponseSchema = z.object({
 export type GitLabWikiPagesResponse = z.infer<typeof GitLabWikiPagesResponseSchema>;
 
 // GitLab Wiki Attachment
+// Recent GitLab versions return a nested `link` object with `url` and `markdown`.
+// Older self-hosted instances may still return the flat `{commit_id, url}` shape.
+// We accept either; the formatter normalises into a single output shape.
 export const GitLabWikiAttachmentSchema = z.object({
   file_name: z.string(),
   file_path: z.string(),
   branch: z.string(),
-  commit_id: z.string(),
-  url: z.string().optional()
+  link: z.object({
+    url: z.string(),
+    markdown: z.string()
+  }).optional(),
+  url: z.string().optional(),
+  commit_id: z.string().optional(),
 });
 
 export type GitLabWikiAttachment = z.infer<typeof GitLabWikiAttachmentSchema>;
@@ -557,6 +564,10 @@ export const UploadProjectWikiAttachmentSchema = z.object({
   project_id: z.string(),
   file_path: z.string(),
   content: z.string(),
+  // 'utf8' (default) treats `content` as text/raw bytes. 'base64' decodes
+  // `content` before upload — required to send binary files (PNG, PDF, etc.)
+  // through MCP's JSON-string parameter.
+  content_encoding: z.enum(['utf8', 'base64']).optional(),
   branch: z.string().optional()
 });
 
@@ -596,6 +607,7 @@ export const UploadGroupWikiAttachmentSchema = z.object({
   group_id: z.string(),
   file_path: z.string(),
   content: z.string(),
+  content_encoding: z.enum(['utf8', 'base64']).optional(),
   branch: z.string().optional()
 });
 

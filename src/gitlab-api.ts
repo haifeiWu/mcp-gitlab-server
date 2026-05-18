@@ -1102,13 +1102,21 @@ export class GitLabApi {
     options: {
       file_path: string;
       content: string;
+      content_encoding?: 'utf8' | 'base64';
       branch?: string;
     }
   ): Promise<GitLabWikiAttachment> {
-    // Convert content to base64 if it's not already
-    const content = options.content.startsWith("data:")
-      ? options.content
-      : `data:application/octet-stream;base64,${Buffer.from(options.content).toString('base64')}`;
+    const fileName = options.file_path.split('/').filter(Boolean).pop() || 'attachment';
+    const bytes = options.content_encoding === 'base64'
+      ? Buffer.from(options.content, 'base64')
+      : options.content;
+    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+    if (options.branch) {
+      formData.append('branch', options.branch);
+    }
 
     const response = await fetch(
       `${this.apiUrl}/projects/${encodeURIComponent(projectId)}/wikis/attachments`,
@@ -1116,14 +1124,8 @@ export class GitLabApi {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          file_name: options.file_path.split('/').pop(),
-          file_path: options.file_path,
-          content: content,
-          branch: options.branch,
-        }),
+        body: formData,
       }
     );
 
@@ -1134,10 +1136,7 @@ export class GitLabApi {
       );
     }
 
-    // Parse the response JSON
     const attachment = await response.json();
-
-    // Validate and return the response
     return GitLabWikiAttachmentSchema.parse(attachment);
   }
 
@@ -1373,13 +1372,21 @@ export class GitLabApi {
     options: {
       file_path: string;
       content: string;
+      content_encoding?: 'utf8' | 'base64';
       branch?: string;
     }
   ): Promise<GitLabWikiAttachment> {
-    // Convert content to base64 if it's not already
-    const content = options.content.startsWith("data:")
-      ? options.content
-      : `data:application/octet-stream;base64,${Buffer.from(options.content).toString('base64')}`;
+    const fileName = options.file_path.split('/').filter(Boolean).pop() || 'attachment';
+    const bytes = options.content_encoding === 'base64'
+      ? Buffer.from(options.content, 'base64')
+      : options.content;
+    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+    if (options.branch) {
+      formData.append('branch', options.branch);
+    }
 
     const response = await fetch(
       `${this.apiUrl}/groups/${encodeURIComponent(groupId)}/wikis/attachments`,
@@ -1387,14 +1394,8 @@ export class GitLabApi {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          file_name: options.file_path.split('/').pop(),
-          file_path: options.file_path,
-          content: content,
-          branch: options.branch,
-        }),
+        body: formData,
       }
     );
 
@@ -1405,10 +1406,7 @@ export class GitLabApi {
       );
     }
 
-    // Parse the response JSON
     const attachment = await response.json();
-
-    // Validate and return the response
     return GitLabWikiAttachmentSchema.parse(attachment);
   }
 

@@ -219,7 +219,7 @@ jobs:
         # so transitive vulns land via Dependabot instead of blocking development.
         # Allow-list via .trivyignore at repo root (escape hatch for stale-DB blocking
         # of a CVE-fix release).
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.tags.outputs.full }}
           severity: 'HIGH,CRITICAL'

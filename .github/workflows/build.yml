@@ -25,6 +25,8 @@ env:
 permissions:
   contents: read
   packages: write
+  id-token: write       # cosign keyless OIDC signing
+  attestations: write   # SBOM + provenance attestations
 
 jobs:
   # -------------------------------------------------------------------
@@ -181,6 +183,11 @@ jobs:
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
           echo "📦 Image tags: $TAGS"
 
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -192,16 +199,99 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=main
+          cache-to: type=gha,mode=max,scope=main
+
+      - name: Trivy vulnerability scan
+        # Tag releases (v*) fail on HIGH/CRITICAL; main + branch builds report-only
+        # so transitive vulns land via Dependabot instead of blocking development.
+        # Allow-list via .trivyignore at repo root (escape hatch for stale-DB blocking
+        # of a CVE-fix release).
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.tags.outputs.full }}
+          severity: 'HIGH,CRITICAL'
+          exit-code: ${{ github.ref_type == 'tag' && '1' || '0' }}
+          format: 'table'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          trivyignores: .trivyignore
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with cosign (keyless OIDC)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+
+      - name: Verify cosign signature (CI smoke with Rekor lag tolerance)
+        # Sign + verify in the same job can race against Rekor's inclusion log
+        # (10-30s lag in pathological cases). We retry 5×15s, then:
+        #   - tag pushes: hard-fail (release trust boundary)
+        #   - main / branch pushes: soft-warn (don't block development)
+        # Every outcome is also written to GITHUB_STEP_SUMMARY so soft-warns
+        # are grep-able post-hoc, not just ephemeral ::warning:: annotations.
+        # See docs/OPERATIONS.md § "Sigstore outage — temporary release path"
+        # for the documented bypass when Sigstore is impaired.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+          IDENTITY_RE='^https://github\.com/yoda-digital/mcp-gitlab-server/\.github/workflows/build\.yml@refs/'
+          ISSUER='https://token.actions.githubusercontent.com'
+          verify_quiet() {
+            cosign verify \
+              --certificate-identity-regexp "$IDENTITY_RE" \
+              --certificate-oidc-issuer "$ISSUER" \
+              "$REF" > /dev/null 2>&1
+          }
+          verify_loud() {
+            # Final attempt: leave stderr visible so a real signing regression
+            # (e.g. identity-regex drift after workflow move) is diagnosable
+            # from the job log without a local repro.
+            cosign verify \
+              --certificate-identity-regexp "$IDENTITY_RE" \
+              --certificate-oidc-issuer "$ISSUER" \
+              "$REF"
+          }
+          for attempt in 1 2 3 4; do
+            if verify_quiet; then
+              echo "::notice::cosign verify OK on attempt $attempt for $REF"
+              printf '## cosign verify\n\n- ✅ OK (attempt %s)\n- Image: `%s`\n' "$attempt" "$REF" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::warning::cosign verify attempt $attempt failed (Rekor inclusion lag?); retrying in 15s"
+            sleep 15
+          done
+          # 5th attempt: loud — operator sees the actual cosign error if it persists
+          if verify_loud; then
+            echo "::notice::cosign verify OK on attempt 5 for $REF"
+            printf '## cosign verify\n\n- ✅ OK (attempt 5, after Rekor lag)\n- Image: `%s`\n' "$REF" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "::error::cosign verify failed after 5 attempts on tag release ($GITHUB_REF_NAME); refusing to publish unverified release"
+            printf '## cosign verify\n\n- ❌ FAILED after 5 attempts on tag `%s`\n- Image: `%s`\n- Action: release blocked; see job log for cosign error\n' "$GITHUB_REF_NAME" "$REF" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "::warning::cosign verify failed after 5 attempts on non-tag build; not blocking (image is signed; verification will succeed once Rekor catches up)"
+          printf '## cosign verify\n\n- ⚠️ SOFT-WARN: failed 5×, non-tag build (`%s`)\n- Image: `%s`\n- Action: image is signed; re-verify locally in ~5min, or grep this summary for the pattern across recent runs.\n' "$GITHUB_REF_NAME" "$REF" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
       - name: Compute E2E image tags
         id: e2e-tags

@@ -186,3 +186,91 @@ If `build.yml` succeeds initially but later runs start failing with `denied: per
 - A maintainer was removed and the package's per-repo grant was tied to their account.
 
 Fix: re-apply step 2.
+
+## Verifying the image (cosign + SBOM + provenance)
+
+Every published image carries a Sigstore keyless signature, a SLSA provenance attestation, and a SPDX SBOM attached to its manifest. Downstream operators — compliance, security review, FedRAMP/ENISA procurement — can verify all three against `ghcr.io`. Verification requires network access to the Sigstore Rekor transparency log; it is not a true offline check.
+
+### Prerequisites
+
+```bash
+# Install cosign (https://docs.sigstore.dev/cosign/system_config/installation/)
+go install github.com/sigstore/cosign/v2/cmd/cosign@latest
+# or via Homebrew:
+brew install cosign
+```
+
+### Verify the signature
+
+```bash
+IMAGE="ghcr.io/yoda-digital/mcp-gitlab-server:latest"
+
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/yoda-digital/mcp-gitlab-server/\.github/workflows/build\.yml@refs/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE"
+```
+
+Expected output: a JSON payload listing the signed claim, OIDC identity (`https://github.com/yoda-digital/mcp-gitlab-server/.github/workflows/build.yml@refs/...`), and Rekor transparency-log entry. A non-zero exit means tampering, a Rekor outage, or that you pulled an image not produced by this repo's pipeline.
+
+### Download the SBOM
+
+```bash
+cosign download sbom "$IMAGE" > sbom.spdx.json
+jq '.packages[] | {name: .name, version: .versionInfo}' sbom.spdx.json | less
+```
+
+The SBOM is SPDX 2.3 JSON and lists every OS package, Node module, and base-image layer that contributed to the final image. Use it to answer *"are we affected by CVE-XXXX-YYYY in dependency Z?"* without rebuilding locally.
+
+### Inspect the provenance attestation
+
+```bash
+cosign download attestation "$IMAGE" \
+  | jq -r '.payload' \
+  | base64 -d \
+  | jq '.predicate'
+```
+
+The provenance follows the SLSA in-toto schema (mode=max) and records the workflow source ref, builder identity, and build inputs.
+
+### Multi-arch manifest
+
+The published manifest contains both `linux/amd64` and `linux/arm64`. Verify with:
+
+```bash
+docker manifest inspect "$IMAGE" \
+  | jq '.manifests[] | {platform: .platform, digest: .digest}'
+```
+
+Apple Silicon, AWS Graviton, and ARM-based Kubernetes nodes will pull the native arm64 layer automatically.
+
+### CI smoke gate
+
+Each `build.yml` run pushes the image, then immediately runs `cosign verify` against the freshly-signed digest. On tag releases (the trust boundary), a failed verify hard-aborts the workflow before downstream consumers can pull the bad artifact. On main and feature branches, verify is retried with backoff and soft-warns (non-blocking) — this absorbs the well-known Rekor inclusion lag (10–30s in pathological cases) without freezing developer iteration.
+
+### Sigstore outage — temporary release path
+
+When Sigstore (Rekor or Fulcio) is impaired and a release must ship anyway:
+
+1. In `.github/workflows/build.yml`, comment out the `Install cosign`, `Sign image with cosign (keyless OIDC)`, and `Verify cosign signature (CI smoke with Rekor lag tolerance)` steps for the duration of the outage. Do **not** delete them.
+2. Push the workflow change to `main` BEFORE cutting the tag.
+3. In the GitHub Release notes (and `CHANGELOG.md` under `[Unreleased]`), prepend:
+   > **Released during Sigstore outage**: this image is **not** cosign-signed. Verify provenance via the SHA256 digest published below and against the GitHub Actions run URL.
+4. Publish the image digest from the workflow run summary in the release notes so consumers can pin by digest.
+5. Once Sigstore recovers, **re-enable the cosign steps in `build.yml`** (revert step 1), then cut a no-op patch release (`0.x.y+1` with only a `CHANGELOG.md` entry) that ships a signed image of the same code. Announce the resumed signing in that release's notes.
+
+Do not paper over a Sigstore outage with `--insecure-ignore-tlog` — that defeats the supply-chain claim.
+
+### Identity rotation (org rename, workflow file move)
+
+The cosign verify identity regex above is anchored on three things downstream consumers will pin:
+
+- Org name: `yoda-digital`
+- Repo name: `mcp-gitlab-server`
+- Workflow path: `.github/workflows/build.yml`
+
+Changing any one silently invalidates every consumer's `cosign verify` script. If a move is unavoidable:
+
+1. **Before the move**: open an issue + `CHANGELOG.md` entry under `[Unreleased]` announcing the new identity regex (the post-move URL) one release ahead of time.
+2. **After the move**: tag a no-op release immediately so consumers have a known-good signed image under the new identity. Update the example in this section of `OPERATIONS.md`.
+3. **For consumers**: maintain a deprecation issue on the old identity for at least 90 days, linking to the new regex. Encourage pinning by `cosign verify --certificate-identity-regexp '<old>|<new>'` during the transition window.

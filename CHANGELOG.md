@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet. New entries land here between releases._
+### Added
+
+- **Multi-arch container image** (`linux/amd64,linux/arm64`) — Apple Silicon, AWS Graviton, ARM-based Kubernetes nodes now pull native layers from `ghcr.io/yoda-digital/mcp-gitlab-server` instead of running through QEMU emulation. Closes #52.
+- **Sigstore cosign keyless signing** with Rekor-lag-tolerant in-CI verification smoke. Operators can verify with the recipe in `docs/OPERATIONS.md` § "Verifying the image". Closes #52.
+- **SLSA Build-Level 3 provenance attestation** (`provenance: mode=max`) + **SPDX SBOM** attached to the published image manifest. Downloadable via `cosign download attestation` and `cosign download sbom`. Closes #52.
+- **Trivy vulnerability scanning** (HIGH/CRITICAL) gated to tag releases — tag pushes block on findings (release trust boundary); main + branch pushes report-only. `.trivyignore` at repo root as documented escape hatch. Closes #52.
+- **`docs/OPERATIONS.md` "Verifying the image"** + Sigstore outage runbook + identity rotation runbook.
+
+### Internal (security hardening, no user-visible change)
+
+- **`id-token: write` + `attestations: write` scoped to the `docker` job only** (principle of least privilege). Previously proposed at workflow level; `validate` and `helm` jobs no longer have OIDC reach.
+- **SHA-pinned every action in the `docker` job** (`actions/checkout`, `docker/setup-qemu-action`, `docker/setup-buildx-action`, `docker/login-action`, `docker/build-push-action`, `aquasecurity/trivy-action`, `sigstore/cosign-installer`) with trailing version comments for Dependabot reviewability. Risk-tier policy documented inline above the `docker:` job. Threat model addressed: a compromised major-tag could have minted an OIDC token via `ACTIONS_ID_TOKEN_REQUEST_URL` and signed a malicious artifact against our Fulcio identity.
+- **`docs/plans/2026-05-18-full-resolution-megasession.md`** committed as historical artifact (drove 0.7.1 + 0.8.0 + this work).
 
 ## [0.8.0] - 2026-05-18
 

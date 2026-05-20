@@ -1,0 +1,23 @@
+# Trivy ignore file — escape hatch for HIGH/CRITICAL findings on tag releases.
+#
+# Usage (per https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/):
+#   Add one CVE ID per line. Optional inline `exp:YYYY-MM-DD` annotation
+#   forces the ignore entry to expire (re-evaluate the next release after that date).
+#
+# Add an entry ONLY when ALL of the following are true:
+#   1. The vulnerability has no patched version available upstream
+#      (`ignore-unfixed: true` already skips fixed ones not yet bumped),
+#   2. The finding is determined to be a false positive for our usage
+#      (e.g. Alpine libcrypto3 mis-attribution), OR
+#   3. The CVE-fix release MUST ship and waiting for the Trivy DB to
+#      drop the false positive is not an option.
+#
+# When adding: include CVE id, link to the upstream determination,
+# the reviewer (your GitHub handle), and an expiry date.
+#
+# Example (DO NOT ENABLE — example only):
+# CVE-2024-9143 exp:2026-09-01  # Alpine libcrypto3 false positive cluster
+#                                # see https://github.com/aquasecurity/trivy/issues/<id>
+#                                # reviewed-by: @nalyk
+
+# (no active ignores)
